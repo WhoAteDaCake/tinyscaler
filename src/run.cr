@@ -1,51 +1,36 @@
 require "yaml"
 require "path"
+require "pg"
+
+require "./spec"
+require "./instances"
 
 # https://github.com/will/crystal-pg/issues/125
 
-alias ProcessCounts = Hash(String, Int8)
-
-root_dir = "/home/ubuntu/projects/pipeline-monorepo/system"
-docker_file = "docker-compose.yaml"
-SIZE_RE = /_(\d)+$/
-
-def read_services(compose_path)
-  yaml = File.open(compose_path) do |file|
-    YAML.parse(file)
-  end
-
-  services = yaml["services"].as_h
-  services.reduce(ProcessCounts.new) do |acc, (key, value)|
-    acc[key.as_s] = 0
-    acc
-  end
+spec = File.open(ARGV[0]) do |file|
+  Config.from_yaml(file)
 end
 
-def read_status(path)
-  base_l = (Path[path].basename).size + 1
-  io = IO::Memory.new
-  Process.run("docker-compose", ["ps"], output: io, chdir: path)
-  io.close
-  output = io.to_s.split "\n"
-  output[2, output.size - 2]
-    .select do | row | row.size != 0 end
-    .reduce(ProcessCounts.new) do | acc, row |
-      name = (row.split)[0]
-      count = (SIZE_RE.match(name).try &.[1])
-      if !count.nil?
-        name = name[base_l, name.size + 1]
-        name = name[0, name.size - count.size - 1]
-        acc[name] = count.to_i8
-      end
-      acc
+instance = Instances.new(Path[spec.paths.directory].join spec.paths.compose_file)
+DB.connect(spec.connection.url) do | conn |
+  while true
+    puts "[Scaler] Syncing"
+    instance.read_current spec.stack
+    
+    puts "[Scaler] Looking for updates:"
+    updates = instance.find_updates(conn, spec.query, spec.stack)
+    if updates.size != 0
+      puts "[Scaler] Scaling #{updates.size} services:"
+      Process.run(
+        "docker",
+        ["service", "scale"] + updates,
+        error: Process::Redirect::Inherit,
+        output: Process::Redirect::Inherit
+      )
+    else
+      puts "[Scaler] No updates found"
     end
-end
 
-def update_status(status, dir)
-  n_status = read_status dir
-  status.merge! n_status
+    sleep spec.polling.timeout.seconds
+  end
 end
-
-service_status = read_services(Path[root_dir].join docker_file)
-service_status = update_status(service_status, root_dir)
-puts service_status
