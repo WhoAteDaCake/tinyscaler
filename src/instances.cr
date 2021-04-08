@@ -74,7 +74,7 @@ class Instances
     latest.reduce(Array(String).new) do | acc, (k, v) |
       if v != @labels[k]
         @labels[k] = v;
-        acc + @dependencies[k].map! { |d| "#{stack}_#{d}=#{v}" }
+        acc + @dependencies[k].map { |d| "#{stack}_#{d}=#{v}" }
       else
         acc
       end
