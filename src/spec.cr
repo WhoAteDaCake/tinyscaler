@@ -21,7 +21,7 @@ class Config
     property compose_file : String
   end
 
-  property query : String
+  property query : Hash(String, String)
   property connection : Connection
   property polling : Polling
   property paths : Paths
